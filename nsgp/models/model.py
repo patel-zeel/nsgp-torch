@@ -5,9 +5,9 @@ import torch.autograd.profiler as profiler
 
 
 class NSGP(torch.nn.Module):
-    def __init__(self, X, y, num_inducing_points=5, X_bar=None,
-                 jitter=10**-8, random_state=None, local_noise=True, local_std=True, 
-                 device='cuda', debug=False):
+    def __init__(self, X, y, X_bar=None,
+                 jitter=10**-8, random_state=None, 
+                 local_noise=True, local_std=True, debug=False):
         super().__init__()
 
         assert len(
@@ -25,7 +25,7 @@ class NSGP(torch.nn.Module):
         self.N = self.X.shape[0]
         self.input_dim = self.X.shape[1]
 
-        self.num_inducing_points = self.X_bar.shape[0]
+        self.num_latent_points = self.X_bar.shape[0]
         self.jitter = jitter
         self.local_noise = local_noise
         self.local_std = local_std
@@ -40,14 +40,14 @@ class NSGP(torch.nn.Module):
         if not self.local_noise:
             self.local_gp_noise_std.requires_grad = False
         self.local_ls = self.param(
-            (self.num_inducing_points, self.input_dim))
+            (self.num_latent_points, self.input_dim))
 
         # Global params
         self.global_gp_std = self.param((1,))
         self.global_gp_noise_std = self.param((1,))
 
         # Other params to be used
-        # self.eye_num_inducing_points = torch.eye(self.num_inducing_points, dtype=self.X.dtype)
+        # self.eye_num_inducing_points = torch.eye(self.num_latent_points, dtype=self.X.dtype)
         # self.eye_N = torch.eye(self.N)
         self.pi = torch.tensor(np.pi)
 
@@ -181,7 +181,7 @@ class NSGP(torch.nn.Module):
         A = 0.5*( Apart1 + Apart2)[0, 0]
         
         # Bpart1 = B
-        # Bpart2 = 0.5*(self.num_inducing_points *
+        # Bpart2 = 0.5*(self.num_latent_points *
         #                                    self.input_dim*torch.log(2*self.pi))
         
         # B = Bpart1# + Bpart2
