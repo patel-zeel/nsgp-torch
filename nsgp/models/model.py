@@ -3,7 +3,6 @@ import gc
 import numpy as np
 import torch.autograd.profiler as profiler
 
-
 class NSGP(torch.nn.Module):
     def __init__(self, X, y, X_bar=None,
                  jitter=10**-8, random_state=None, 
@@ -81,7 +80,7 @@ class NSGP(torch.nn.Module):
 
         # Diagonal Solution from https://stackoverflow.com/a/48170846/13330701
         dk = k.diagonal()
-        dk += self.local_gp_noise_std[dim]**2
+        dk += self.local_gp_noise_std[dim]**2 + self.jitter
         c = torch.linalg.cholesky(k)
         alpha = torch.cholesky_solve(
             torch.log(torch.abs(self.local_ls[:, dim, None])), c)
@@ -187,7 +186,7 @@ class NSGP(torch.nn.Module):
         # B = Bpart1# + Bpart2
         
         # print("A1", Apart1, "A2", Apart2, "B", B, "Loss", A+B, 'local var', self.local_gp_std)
-        return (A+B)/self.N/self.input_dim
+        return (A+B)/self.X.nelement()
 
     def predict(self, X_new):  # Predict at new locations
         K = self.GlobalKernel(self.X, self.X)
