@@ -7,20 +7,15 @@ def test_model():
     from nsgp.utils.inducing_functions import f_kmeans
     import torch
     import numpy as np
+    import pods
 
-    num_low = 25
-    num_high = 25
-    gap = -.1
-    X = torch.vstack((torch.linspace(-1, -gap/2.0, num_low)[:, np.newaxis],
-                      torch.linspace(gap/2.0, 1, num_high)[:, np.newaxis])).reshape(-1, 1)
-    y = torch.vstack((torch.zeros((num_low, 1)), torch.ones((num_high, 1))))# + torch.rand(num_high+num_low, 1)
-    scale = torch.sqrt(y.var())
-    offset = y.mean()
-    y = ((y-offset)/scale).reshape(-1, 1)
+    data = pods.datasets.olympic_marathon_men()
+    X = torch.tensor(data['X'])
+    y = torch.tensor(data['Y'])
 
-    X_new = torch.linspace(-1, 1, 100).reshape(-1, 1)
-    X_bar = f_kmeans(X, num_inducing_points=5)#, random_state=0)
-    model = NSGP(X, y, X_bar=X_bar, jitter=10**-5)#, random_state=0)
+    X_new = torch.linspace(X.min(), X.max(), 100).reshape(-1, 1)
+    X_bar = f_kmeans(X, num_inducing_points=10, random_state=0)
+    model = NSGP(X, y, X_bar=X_bar, jitter=10**-5, random_state=3)
     optim = torch.optim.Adam(model.parameters(), lr=0.1)
     # optim = torch.optim.SGD(model.parameters(), lr=0.01)
 
@@ -49,4 +44,4 @@ def test_model():
 
         ax[1].plot(X_new, model.get_LS(X_new, 0))
 
-        fig.savefig('./test_step_function.pdf')
+        fig.savefig('./test_olympic_data.pdf')

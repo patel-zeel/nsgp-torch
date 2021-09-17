@@ -1,10 +1,12 @@
 import torch
+import gc
 import numpy as np
-
+import torch.autograd.profiler as profiler
 
 class NSGP(torch.nn.Module):
-    def __init__(self, X, y, num_inducing_points=5, X_bar=None,
-                 jitter=10**-8, random_state=None, local_noise=True, local_std=True):
+    def __init__(self, X, y, X_bar=None,
+                 jitter=10**-8, random_state=None, 
+                 local_noise=True, local_std=True, debug=False):
         super().__init__()
 
         assert len(
@@ -18,11 +20,11 @@ class NSGP(torch.nn.Module):
         self.raw_mean = y.mean()
         self.y = y - self.raw_mean
         self.X_bar = X_bar
-
+        self.debug = debug
         self.N = self.X.shape[0]
         self.input_dim = self.X.shape[1]
 
-        self.num_inducing_points = self.X_bar.shape[0]
+        self.num_latent_points = self.X_bar.shape[0]
         self.jitter = jitter
         self.local_noise = local_noise
         self.local_std = local_std
@@ -37,14 +39,14 @@ class NSGP(torch.nn.Module):
         if not self.local_noise:
             self.local_gp_noise_std.requires_grad = False
         self.local_ls = self.param(
-            (self.num_inducing_points, self.input_dim))
+            (self.num_latent_points, self.input_dim))
 
         # Global params
         self.global_gp_std = self.param((1,))
         self.global_gp_noise_std = self.param((1,))
 
         # Other params to be used
-        # self.eye_num_inducing_points = torch.eye(self.num_inducing_points, dtype=self.X.dtype)
+        # self.eye_num_inducing_points = torch.eye(self.num_latent_points, dtype=self.X.dtype)
         # self.eye_N = torch.eye(self.N)
         self.pi = torch.tensor(np.pi)
 
@@ -66,78 +68,90 @@ class NSGP(torch.nn.Module):
 
     def LocalKernel(self, x1, x2, dim):  # kernel of local gp (GP_l)
         dist = torch.square(x1 - x2.T)
+        dist[dist==0] = 10**-20
         scaled_dist = dist/self.local_gp_ls[dim]**2
-
+        # print(scaled_dist, self.local_gp_ls[dim]**2)
         return self.local_gp_std[dim]**2 * torch.exp(-0.5*scaled_dist)
 
-    def get_LS(self, X):  # Infer lengthscales for train_X (self.X)
-        l_list = []
-        if self.training:
-            B = []
-        for dim in range(self.input_dim):
-            k = self.LocalKernel(
-                self.X_bar[:, dim, None], self.X_bar[:, dim, None], dim)
+    def get_LS(self, X, dim):  # Infer lengthscales for train_X (self.X)
+        # print('Log: dim', dim)
+        k = self.LocalKernel(
+            self.X_bar[:, dim, None], self.X_bar[:, dim, None], dim)
 
-            # Diagonal Solution from https://stackoverflow.com/a/48170846/13330701
-            dk = k.diagonal()
-            dk += self.local_gp_noise_std[dim]**2
-            c = torch.linalg.cholesky(k)
-            alpha = torch.cholesky_solve(
-                torch.log(torch.abs(self.local_ls[:, dim, None])), c)
+        # Diagonal Solution from https://stackoverflow.com/a/48170846/13330701
+        dk = k.diagonal()
+        dk += self.local_gp_noise_std[dim]**2 + self.jitter
+        c = torch.linalg.cholesky(k)
+        alpha = torch.cholesky_solve(
+            torch.log(torch.abs(self.local_ls[:, dim, None])), c)
+        k_star = self.LocalKernel(
+            X[:, dim, None], self.X_bar[:, dim, None], dim)
+        l = torch.exp(k_star@alpha)
+
+        if self.training:
             k_star = self.LocalKernel(
                 X[:, dim, None], self.X_bar[:, dim, None], dim)
-            l = torch.exp(k_star@alpha)
-            l_list.append(l)
+            k_star_star = self.LocalKernel(
+                X[:, dim, None], X[:, dim, None], dim)
 
-            if self.training:
-                k_star = self.LocalKernel(
-                    X[:, dim, None], self.X_bar[:, dim, None], dim)
-                k_star_star = self.LocalKernel(
-                    X[:, dim, None], X[:, dim, None], dim)
+            chol = torch.linalg.cholesky(k)
+            v = torch.cholesky_solve(k_star.T, chol)
 
-                chol = torch.linalg.cholesky(k)
-                v = torch.cholesky_solve(k_star.T, chol)
-
-                k_post = k_star_star - k_star@v
-                k_post_det = torch.det(k_post)
-                if k_post_det<=0:
-                    k_post_det = 10**-20
-                B.append(torch.log((2*self.pi)**(self.N/2) * k_post_det).reshape(-1,1))
-                # dk_post = k_post.diagonal()
-                # dk_post += self.jitter
-                # post_chol = torch.linalg.cholesky(k_post)
-                # B.append(torch.log(post_chol.diagonal()))
-
-        if self.training:
-            return l_list, B
+            k_post = k_star_star - k_star@v
+            k_post_det = torch.det(k_post)
+            k_post_det = torch.clamp(k_post_det, min=10**-20)
+            # if k_post_det<=0:
+            #     k_post_det = torch.tensor(10**-20)
+            B = torch.log(k_post_det).reshape(-1,1)
+            # dk_post = k_post.diagonal()
+            # dk_post += self.jitter
+            # post_chol = torch.linalg.cholesky(k_post)
+            # B.append(torch.log(post_chol.diagonal()))
+            return l, B
         else:
-            return l_list
+            return l
 
     def GlobalKernel(self, X1, X2):  # global GP (GP_y)
-        if self.training:
-            l, B = self.get_LS(X1)
-            l = torch.cat(l, dim=1)
-            l1 = l[:, None, :]
-            l2 = l[None, :, :]
-        else:
-            l1 = torch.cat(self.get_LS(X1), dim=1)[:, None, :] # n,d -> n,1,d
-            l2 = torch.cat(self.get_LS(X2), dim=1)[None, :, :] # m,d -> 1,m,d = n,m,d
-        
         suffix = None
         scaled_dist = None
-        for d in range(l1.shape[2]):
-            lsq = torch.square(l1[:,:,d]) + torch.square(l2[:,:,d])
-            if suffix is None:
-                suffix = torch.sqrt(2 * l1[:,:,d] * l2[:,:,d] / lsq)
+        B_all = None
+        for d in range(X1.shape[1]):
+            if self.debug:
+                input('start:')
+            if self.training:
+                l, B = self.get_LS(X1, d)
+                if B_all is None:
+                    B_all = B
+                else:
+                    B_all +=  B
+                if self.debug:
+                    input('0:')
+                l1 = l
+                l2 = l
             else:
-                suffix = suffix * torch.sqrt(2 * l1[:,:,d] * l2[:,:,d] / lsq)
+                l1 = self.get_LS(X1, d)
+                l2 = self.get_LS(X2, d)
+            if self.debug:
+                input('1:')
+            lsq = torch.square(l1) + torch.square(l2.T)
+            if suffix is None:
+                suffix = torch.sqrt(2 * l1@l2.T / lsq)
+            else:
+                suffix = suffix * torch.sqrt(2 * l1@l2.T / lsq)
+            if self.debug:    
+                input('2:')
             dist = torch.square(X1[:, None, d] - X2[None, :, d])
             if scaled_dist is None:
                 scaled_dist = dist/lsq
             else:
                 scaled_dist = scaled_dist + dist/lsq
-        
-        
+            if self.debug:
+                input('3:')
+
+            # del l, l1, l2, B, lsq, dist
+            # gc.collect()
+            # torch.cuda.empty_cache()
+
         K = self.global_gp_std**2 * \
             suffix * torch.exp(-scaled_dist)
 
@@ -146,18 +160,33 @@ class NSGP(torch.nn.Module):
         else:
             return K
 
-    def nlml(self):
+    def forward(self):
         K, B = self.GlobalKernel(self.X, self.X)
 
         dK = K.diagonal()
-        dK += self.global_gp_noise_std**2
+        dK += self.global_gp_noise_std**2 + self.jitter
+        # print(K)
         L = torch.linalg.cholesky(K)
         alpha = torch.cholesky_solve(self.y, L)
-        A = 0.5*(self.y.T@alpha + torch.sum(torch.log(L.diagonal())) +
-                 self.N * torch.log(2*self.pi))[0, 0]
-        B = torch.sum(torch.cat(B)) + 0.5*(self.num_inducing_points *
-                                           self.input_dim*torch.log(2*self.pi))
-        return A+B
+        
+        Apart1 = self.y.T@alpha
+        Apart2 = torch.sum(torch.log(L.diagonal()))
+        # Apart2 = torch.det(K)
+        # print('Before Apart2', Apart2)
+        # Apart2 = Apart2.clamp(Apart2, min=10**-20)
+        # Apart2 = torch.log(Apart2)
+        # Apart3 = self.N * torch.log(2*self.pi)
+
+        A = 0.5*( Apart1 + Apart2)[0, 0]
+        
+        # Bpart1 = B
+        # Bpart2 = 0.5*(self.num_latent_points *
+        #                                    self.input_dim*torch.log(2*self.pi))
+        
+        # B = Bpart1# + Bpart2
+        
+        # print("A1", Apart1, "A2", Apart2, "B", B, "Loss", A+B, 'local var', self.local_gp_std)
+        return (A+B)/self.X.nelement()
 
     def predict(self, X_new):  # Predict at new locations
         K = self.GlobalKernel(self.X, self.X)

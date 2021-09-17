@@ -31,7 +31,7 @@ def model(device):
     model.train()
     for _ in range(200):
         optim.zero_grad()
-        loss = model.nlml()
+        loss = model()
         losses.append(loss.item())
         loss.backward()
         optim.step()
@@ -55,5 +55,5 @@ def model(device):
 
 
 def test_model():
-    model('cpu')
     model('cuda')
+    model('cpu')
