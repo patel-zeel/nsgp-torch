@@ -52,3 +52,4 @@ with torch.no_grad():
     ax[1].set_xlabel('X')
     ax[1].set_ylabel('Lengthscale')
 ```
+![image](https://user-images.githubusercontent.com/59758528/133725880-26a634d3-1a0d-4f35-bb4b-25d37b68712f.png)
