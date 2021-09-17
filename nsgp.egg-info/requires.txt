@@ -1,8 +1,0 @@
-matplotlib
-numpy
-pandas
-torch
-
-[tests]
-pytest
-pytest-cov
