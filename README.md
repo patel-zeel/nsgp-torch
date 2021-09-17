@@ -1,3 +1,3 @@
-# NSGPy
+# NSGP
 
-Current development is in Hamilton
+### Examples

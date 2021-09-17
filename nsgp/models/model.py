@@ -189,6 +189,8 @@ class NSGP(torch.nn.Module):
         return (A+B)/self.X.nelement()
 
     def predict(self, X_new):  # Predict at new locations
+        if self.training:
+            raise Exception("Please turn on evaluation mode by setting model.eval()")
         K = self.GlobalKernel(self.X, self.X)
         K_star = self.GlobalKernel(X_new, self.X)
         K_star_star = self.GlobalKernel(X_new, X_new)

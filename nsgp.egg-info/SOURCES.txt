@@ -1,5 +1,22 @@
+.gitignore
 README.md
+global_test.py
+pytest.ini
+requirements.txt
 setup.py
+test_olympic_data.pdf
+test_step_function.pdf
+.vscode/launch.json
+.vscode/settings.json
+adhoc/2D Test.ipynb
+adhoc/ND Test for veification.ipynb
+adhoc/ND_test.py
+adhoc/compare.jpg
+adhoc/error.jpg
+adhoc/global_test.py
+adhoc/pred.jpg
+adhoc/test.jpg
+adhoc/tricks.md
 nsgp/__init__.py
 nsgp.egg-info/PKG-INFO
 nsgp.egg-info/SOURCES.txt

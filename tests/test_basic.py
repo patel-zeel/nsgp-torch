@@ -21,7 +21,7 @@ def test_model():
         # for param in model.parameters():
         #     param.clamp_min(10**-5)
         optim.zero_grad()
-        loss = model.nlml()
+        loss = model()
         losses.append(loss.item())
         loss.backward()
         optim.step()
