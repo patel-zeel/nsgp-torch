@@ -1,5 +1,10 @@
 # NSGP
 
+### Install
+```bash
+pip install git+https://github.com/patel-zeel/nsgp-torch
+```
+
 ### Example
 
 ```python
